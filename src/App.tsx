@@ -23,6 +23,8 @@ const TG_CODE_STORAGE_KEY = 'xo_tg_link_code'
 const TG_PROMPT_DISMISSED_KEY = 'xo_tg_prompt_dismissed'
 const FAIL_RETRIES_LEFT_STORAGE_KEY = 'xo_fail_retries_left'
 const FAIL_RETRIES_MAX = 3
+const FAIL_PENDING_OUTCOME_STORAGE_KEY = 'xo_fail_pending_outcome'
+type FailOutcome = 'loss' | 'draw' | null
 
 function App() {
   const [board, setBoard] = useState<Cell[]>(() => Array(9).fill(null))
@@ -35,13 +37,26 @@ function App() {
   const [copied, setCopied] = useState(false)
   const [tgModalOpen, setTgModalOpen] = useState(false)
   const [tgLink, setTgLink] = useState<TelegramLinkState>({ status: 'idle' })
-  const [endModalOpen, setEndModalOpen] = useState(false)
+  const [endModalOpen, setEndModalOpen] = useState(() => {
+    const v = window.localStorage.getItem(FAIL_PENDING_OUTCOME_STORAGE_KEY)
+    return v === 'loss' || v === 'draw'
+  })
   const [failRetriesLeft, setFailRetriesLeft] = useState<number>(FAIL_RETRIES_MAX)
+  const [pendingFailOutcome, setPendingFailOutcome] = useState<FailOutcome>(() => {
+    const v = window.localStorage.getItem(FAIL_PENDING_OUTCOME_STORAGE_KEY)
+    return v === 'loss' || v === 'draw' ? v : null
+  })
 
   const telegramSentRef = useRef(false)
 
-  const lockBoard = result !== 'playing' || turn !== 'human'
-  const isFailResult = result === 'loss' || result === 'draw'
+  const lockBoard =
+    result !== 'playing' || turn !== 'human' || pendingFailOutcome !== null
+  const isFailResult =
+    result === 'loss' || result === 'draw' || pendingFailOutcome !== null
+
+  const modalOutcome: Result | null =
+    result !== 'playing' ? result : pendingFailOutcome
+  const modalIsFail = modalOutcome === 'loss' || modalOutcome === 'draw'
 
   const statusText = useMemo(() => {
     if (result === 'win') return 'Победа!'
@@ -66,6 +81,8 @@ function App() {
     setCopied(false)
     telegramSentRef.current = false
     setEndModalOpen(false)
+    setPendingFailOutcome(null)
+    window.localStorage.removeItem(FAIL_PENDING_OUTCOME_STORAGE_KEY)
   }
 
   function setFailRetriesLeftPersist(next: number) {
@@ -75,7 +92,7 @@ function App() {
   }
 
   function onTryAgain() {
-    if (result === 'loss' || result === 'draw') {
+    if (isFailResult) {
       if (failRetriesLeft <= 0) return
       setFailRetriesLeftPersist(failRetriesLeft - 1)
     }
@@ -84,7 +101,7 @@ function App() {
 
   function onResetClick() {
     // If the game is already ended with loss/draw, treat reset as a retry (consumes attempts).
-    if (result === 'loss' || result === 'draw') {
+    if (isFailResult) {
       onTryAgain()
       return
     }
@@ -173,17 +190,23 @@ function App() {
       setWinningLine(line)
       setPromoCode(code)
       setResult('win')
+      setPendingFailOutcome(null)
+      window.localStorage.removeItem(FAIL_PENDING_OUTCOME_STORAGE_KEY)
       return true
     }
 
     if (winner === AI) {
       setWinningLine(line)
       setResult('loss')
+      setPendingFailOutcome('loss')
+      window.localStorage.setItem(FAIL_PENDING_OUTCOME_STORAGE_KEY, 'loss')
       return true
     }
 
     if (isDraw(nextBoard)) {
       setResult('draw')
+      setPendingFailOutcome('draw')
+      window.localStorage.setItem(FAIL_PENDING_OUTCOME_STORAGE_KEY, 'draw')
       return true
     }
 
@@ -306,7 +329,7 @@ function App() {
               value={difficulty}
               onChange={(e) => setDifficulty(e.target.value as Difficulty)}
               aria-label="Сложность компьютера"
-              disabled={result !== 'playing'}
+              disabled={result !== 'playing' || pendingFailOutcome !== null}
             >
               <option value="soft">Легкий</option>
               <option value="balanced">Средний</option>
@@ -374,22 +397,26 @@ function App() {
           не уйдёт.
         </footer>
 
-        {result !== 'playing' && endModalOpen && (
+        {modalOutcome !== null && endModalOpen && (
           <div className="overlay" role="dialog" aria-modal="true">
             <div className="modal">
               <div
                 className={`badge ${
-                  result === 'win'
+                  modalOutcome === 'win'
                     ? 'badge--win'
-                    : result === 'loss'
+                    : modalOutcome === 'loss'
                       ? 'badge--loss'
                       : 'badge--draw'
                 }`}
               >
-                {result === 'win' ? 'Победа' : result === 'loss' ? 'Проигрыш' : 'Ничья'}
+                {modalOutcome === 'win'
+                  ? 'Победа'
+                  : modalOutcome === 'loss'
+                    ? 'Проигрыш'
+                    : 'Ничья'}
               </div>
 
-              {result === 'win' && promoCode && (
+              {modalOutcome === 'win' && promoCode && (
                 <>
                   <h2 className="modalTitle">Вы выиграли — держите скидку</h2>
                   <p className="modalText">Ваш промокод на скидку:</p>
@@ -409,7 +436,7 @@ function App() {
                 </>
               )}
 
-              {result === 'loss' && (
+              {modalOutcome === 'loss' && (
                 <>
                   <h2 className="modalTitle">Проигрыш</h2>
                   <p className="modalText">
@@ -418,7 +445,7 @@ function App() {
                 </>
               )}
 
-              {result === 'draw' && (
+              {modalOutcome === 'draw' && (
                 <>
                   <h2 className="modalTitle">Ничья</h2>
                   <p className="modalText">Вы были очень близко. Ещё один раунд?</p>
@@ -430,15 +457,16 @@ function App() {
                   type="button"
                   className="btn btn--primary"
                   onClick={onTryAgain}
-                  disabled={isFailResult && failRetriesLeft <= 0}
+                  disabled={modalIsFail && failRetriesLeft <= 0}
                 >
-                  {isFailResult
+                  {modalIsFail
                     ? failRetriesLeft > 0
                       ? `Сыграть ещё раз (осталось ${failRetriesLeft})`
                       : 'Попытки закончились'
                     : 'Сыграть ещё раз'}
                 </button>
-                {isFailResult && (
+                {/* Close only for in-session fail (not for persisted fail after refresh) */}
+                {(result === 'loss' || result === 'draw') && (
                   <button
                     type="button"
                     className="btn btn--ghost"
