@@ -91,23 +91,29 @@ function App() {
     resetRound()
   }
 
-  async function checkLinkStatus(code: string): Promise<boolean> {
+  async function checkLinkStatus(
+    code: string,
+  ): Promise<{ linked: boolean; unknown: boolean }> {
     const res = await fetch(`/api/telegram/link/${encodeURIComponent(code)}`)
-    if (!res.ok) return false
-    const data = (await res.json().catch(() => null)) as { linked?: boolean } | null
-    return Boolean(data?.linked)
+    if (!res.ok) return { linked: false, unknown: true }
+    const data = (await res.json().catch(() => null)) as
+      | { linked?: boolean; unknown?: boolean }
+      | null
+    return { linked: Boolean(data?.linked), unknown: Boolean(data?.unknown) }
   }
 
   async function loadExistingLink() {
     const stored = window.localStorage.getItem(TG_CODE_STORAGE_KEY)
     if (!stored) return
 
-    setTgLink({ status: 'ready', code: stored, deepLink: null })
-
-    const linked = await checkLinkStatus(stored)
-    if (linked) {
-      setTgLink({ status: 'linked', code: stored })
+    const status = await checkLinkStatus(stored)
+    if (status.unknown) {
+      window.localStorage.removeItem(TG_CODE_STORAGE_KEY)
+      setTgLink({ status: 'idle' })
+      return
     }
+    if (status.linked) setTgLink({ status: 'linked', code: stored })
+    else setTgLink({ status: 'ready', code: stored, deepLink: null })
   }
 
   useEffect(() => {
@@ -144,6 +150,8 @@ function App() {
       const data = (await res.json()) as { code: string; deepLink: string | null }
       if (!data?.code) throw new Error('Bad response')
       setTgLink({ status: 'ready', code: data.code, deepLink: data.deepLink ?? null })
+      // Persist the code so the player can finish linking even after refresh.
+      window.localStorage.setItem(TG_CODE_STORAGE_KEY, data.code)
     } catch (e) {
       setTgLink({
         status: 'error',
@@ -570,7 +578,9 @@ function App() {
 }
 
 function TelegramLinkPoller({ code, onLinked }: { code: string; onLinked: () => void }) {
-  const [status, setStatus] = useState<'waiting' | 'linked' | 'error'>('waiting')
+  const [status, setStatus] = useState<'waiting' | 'linked' | 'unknown' | 'error'>(
+    'waiting',
+  )
 
   useEffect(() => {
     let alive = true
@@ -578,7 +588,16 @@ function TelegramLinkPoller({ code, onLinked }: { code: string; onLinked: () => 
       try {
         const res = await fetch(`/api/telegram/link/${encodeURIComponent(code)}`)
         if (!res.ok) return
-        const data = (await res.json().catch(() => null)) as { linked?: boolean } | null
+        const data = (await res.json().catch(() => null)) as
+          | { linked?: boolean; unknown?: boolean }
+          | null
+        if (data?.unknown) {
+          if (!alive) return
+          setStatus('unknown')
+          // If the server doesn't know this code anymore (restart/TTL), the user should re-connect.
+          window.localStorage.removeItem(TG_CODE_STORAGE_KEY)
+          return
+        }
         if (data?.linked) {
           if (!alive) return
           setStatus('linked')
@@ -600,6 +619,12 @@ function TelegramLinkPoller({ code, onLinked }: { code: string; onLinked: () => 
   }, [code, onLinked])
 
   if (status === 'waiting') return <p className="telegramNote">Ожидаем подтверждение…</p>
+  if (status === 'unknown')
+    return (
+      <p className="telegramNote telegramNote--error">
+        Код привязки устарел. Нажмите «Попробовать ещё раз», чтобы создать новый.
+      </p>
+    )
   if (status === 'error') return <p className="telegramNote telegramNote--error">Проблема с проверкой статуса.</p>
   return null
 }

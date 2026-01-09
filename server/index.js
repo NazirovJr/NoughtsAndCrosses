@@ -186,7 +186,10 @@ app.get('/api/telegram/link/:code', async (req, res) => {
     if (!code) return res.status(400).json({ ok: false, error: 'Missing code' })
 
     cleanupLinks()
-    if (!linkMap.has(code)) return res.status(404).json({ ok: false, error: 'Unknown code' })
+    if (!linkMap.has(code)) {
+      // In public UI it's better to avoid a noisy 404 and let client re-connect gracefully.
+      return res.json({ ok: true, linked: false, unknown: true })
+    }
 
     await pollTelegramUpdates(token)
 
