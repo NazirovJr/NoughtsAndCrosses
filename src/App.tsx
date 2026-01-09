@@ -300,9 +300,9 @@ function App() {
               aria-label="Сложность компьютера"
               disabled={result !== 'playing'}
             >
-              <option value="soft">Лёгкий</option>
+              <option value="soft">Легкий</option>
               <option value="balanced">Средний</option>
-              <option value="smart">Тяжёлый</option>
+              <option value="smart">Тяжелый</option>
             </select>
           </label>
 
@@ -357,7 +357,7 @@ function App() {
           </div>
 
           <p className="hint">
-            Подсказка: в режиме «Лёгкий» проще победить и получить промокод.
+            Подсказка: в режиме «Легкий» проще победить и получить промокод.
           </p>
         </section>
 
