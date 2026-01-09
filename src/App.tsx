@@ -22,9 +22,33 @@ type TelegramLinkState =
 const TG_CODE_STORAGE_KEY = 'xo_tg_link_code'
 const TG_PROMPT_DISMISSED_KEY = 'xo_tg_prompt_dismissed'
 const FAIL_RETRIES_LEFT_STORAGE_KEY = 'xo_fail_retries_left'
+const FAIL_RETRIES_DAY_STORAGE_KEY = 'xo_fail_retries_day'
 const FAIL_RETRIES_MAX = 3
 const FAIL_PENDING_OUTCOME_STORAGE_KEY = 'xo_fail_pending_outcome'
 type FailOutcome = 'loss' | 'draw' | null
+
+function getLocalDayKey(d = new Date()): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function msUntilNextMidnight(now = new Date()): number {
+  const next = new Date(now)
+  next.setHours(24, 0, 0, 0)
+  return next.getTime() - now.getTime()
+}
+
+function formatAttempts(n: number): string {
+  const abs = Math.abs(n)
+  const mod100 = abs % 100
+  const mod10 = abs % 10
+  if (mod100 >= 11 && mod100 <= 19) return `${n} попыток`
+  if (mod10 === 1) return `${n} попытка`
+  if (mod10 >= 2 && mod10 <= 4) return `${n} попытки`
+  return `${n} попыток`
+}
 
 function App() {
   const [board, setBoard] = useState<Cell[]>(() => Array(9).fill(null))
@@ -59,17 +83,21 @@ function App() {
   const modalIsFail = modalOutcome === 'loss' || modalOutcome === 'draw'
 
   const statusText = useMemo(() => {
+    if (pendingFailOutcome === 'loss') return 'Проигрыш'
+    if (pendingFailOutcome === 'draw') return 'Ничья'
     if (result === 'win') return 'Победа!'
     if (result === 'loss') return 'Проигрыш'
     if (result === 'draw') return 'Ничья'
     return turn === 'human' ? 'Твой ход' : 'Ход компьютера'
-  }, [result, turn])
+  }, [pendingFailOutcome, result, turn])
 
   const statusDotClass = useMemo(() => {
+    if (pendingFailOutcome === 'loss') return 'dot--violet'
+    if (pendingFailOutcome === 'draw') return 'dot--violet'
     if (result === 'win') return 'dot--pink'
     if (result === 'loss') return 'dot--violet'
     return turn === 'human' ? 'dot--pink' : 'dot--violet'
-  }, [result, turn])
+  }, [pendingFailOutcome, result, turn])
 
   function resetRound() {
     setBoard(Array(9).fill(null))
@@ -145,13 +173,49 @@ function App() {
       if (!dismissed && !stored) setTgModalOpen(true)
     })
 
-    const storedRetries = window.localStorage.getItem(FAIL_RETRIES_LEFT_STORAGE_KEY)
-    const parsed = storedRetries ? Number.parseInt(storedRetries, 10) : NaN
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= FAIL_RETRIES_MAX) {
-      setFailRetriesLeft(parsed)
-    } else {
-      window.localStorage.setItem(FAIL_RETRIES_LEFT_STORAGE_KEY, String(FAIL_RETRIES_MAX))
+    const today = getLocalDayKey()
+    const storedDay = window.localStorage.getItem(FAIL_RETRIES_DAY_STORAGE_KEY)
+
+    const resetDailyLimits = () => {
+      window.localStorage.setItem(FAIL_RETRIES_DAY_STORAGE_KEY, getLocalDayKey())
+      window.localStorage.setItem(
+        FAIL_RETRIES_LEFT_STORAGE_KEY,
+        String(FAIL_RETRIES_MAX),
+      )
+      window.localStorage.removeItem(FAIL_PENDING_OUTCOME_STORAGE_KEY)
       setFailRetriesLeft(FAIL_RETRIES_MAX)
+      setPendingFailOutcome(null)
+    }
+
+    if (storedDay !== today) {
+      resetDailyLimits()
+    } else {
+      const storedRetries = window.localStorage.getItem(FAIL_RETRIES_LEFT_STORAGE_KEY)
+      const parsed = storedRetries ? Number.parseInt(storedRetries, 10) : NaN
+      if (Number.isFinite(parsed) && parsed >= 0 && parsed <= FAIL_RETRIES_MAX) {
+        setFailRetriesLeft(parsed)
+      } else {
+        window.localStorage.setItem(
+          FAIL_RETRIES_LEFT_STORAGE_KEY,
+          String(FAIL_RETRIES_MAX),
+        )
+        setFailRetriesLeft(FAIL_RETRIES_MAX)
+      }
+    }
+
+    // Daily reset at 00:00 (local time)
+    let t: number | undefined
+    const schedule = () => {
+      const ms = msUntilNextMidnight()
+      t = window.setTimeout(() => {
+        resetDailyLimits()
+        schedule()
+      }, ms + 50)
+    }
+    schedule()
+
+    return () => {
+      if (t !== undefined) window.clearTimeout(t)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -440,7 +504,9 @@ function App() {
                 <>
                   <h2 className="modalTitle">Проигрыш</h2>
                   <p className="modalText">
-                    Ничего страшного — хотите сыграть ещё раз?
+                    {failRetriesLeft > 0
+                      ? `Хотите сыграть ещё раз? Осталось ${formatAttempts(failRetriesLeft)} сегодня.`
+                      : 'Попытки на сегодня закончились. Приходите завтра — лимит обновится в 00:00.'}
                   </p>
                 </>
               )}
@@ -448,7 +514,11 @@ function App() {
               {modalOutcome === 'draw' && (
                 <>
                   <h2 className="modalTitle">Ничья</h2>
-                  <p className="modalText">Вы были очень близко. Ещё один раунд?</p>
+                  <p className="modalText">
+                    {failRetriesLeft > 0
+                      ? `Вы были очень близко. Ещё один раунд? Осталось ${formatAttempts(failRetriesLeft)} сегодня.`
+                      : 'Попытки на сегодня закончились. Приходите завтра — лимит обновится в 00:00.'}
+                  </p>
                 </>
               )}
 
@@ -462,11 +532,11 @@ function App() {
                   {modalIsFail
                     ? failRetriesLeft > 0
                       ? `Сыграть ещё раз (осталось ${failRetriesLeft})`
-                      : 'Попытки закончились'
+                      : 'Приходите завтра'
                     : 'Сыграть ещё раз'}
                 </button>
                 {/* Close only for in-session fail (not for persisted fail after refresh) */}
-                {(result === 'loss' || result === 'draw') && (
+                {(result === 'loss' || result === 'draw') && failRetriesLeft > 0 && (
                   <button
                     type="button"
                     className="btn btn--ghost"
