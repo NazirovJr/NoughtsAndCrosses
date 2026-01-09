@@ -12,7 +12,6 @@ const app = express()
 app.disable('x-powered-by')
 app.use(express.json({ limit: '64kb' }))
 
-let cachedChatId = null
 let botUsername = null
 let updatesOffset = 0
 let lastPollAt = 0
@@ -101,8 +100,6 @@ async function pollTelegramUpdates(token) {
       const chatId = extractChatId(upd)
       if (chatId === null || chatId === undefined) continue
 
-      cachedChatId = String(chatId)
-
       const text = extractText(upd)
       const code = extractStartCode(text)
       if (!code) continue
@@ -120,17 +117,11 @@ async function pollTelegramUpdates(token) {
 }
 
 async function resolveTelegramChatId(token) {
+  // Safer default for public deployments:
+  // - If you want "one admin/test chat", set TELEGRAM_CHAT_ID
+  // - Otherwise, use per-player linkCode (player must press Start in bot)
   const envChatId = process.env.TELEGRAM_CHAT_ID
-  if (envChatId) return envChatId
-  if (cachedChatId) return cachedChatId
-
-  try {
-    await pollTelegramUpdates(token)
-    return cachedChatId
-  } catch (err) {
-    console.error('Failed to resolve TELEGRAM_CHAT_ID via getUpdates:', err?.message ?? err)
-    return null
-  }
+  return envChatId || null
 }
 
 app.get('/api/health', (_req, res) => {
@@ -213,11 +204,10 @@ app.post('/api/telegram', async (req, res) => {
       })
     }
 
-    await pollTelegramUpdates(token)
-
     let chatId = null
 
     if (typeof linkCode === 'string' && linkCode.trim()) {
+      await pollTelegramUpdates(token)
       cleanupLinks()
       const rec = linkMap.get(linkCode.trim())
       if (rec?.chatId) {
@@ -231,10 +221,10 @@ app.post('/api/telegram', async (req, res) => {
     } else {
       chatId = await resolveTelegramChatId(token)
       if (!chatId) {
-        return res.status(500).json({
+        return res.status(400).json({
           ok: false,
           error:
-            'Telegram chat is not configured. Set TELEGRAM_CHAT_ID or connect Telegram in the UI (press /start in the bot).',
+            'Telegram is not connected. Connect Telegram in the UI (press Start in the bot) or set TELEGRAM_CHAT_ID (admin/test chat).',
         })
       }
     }

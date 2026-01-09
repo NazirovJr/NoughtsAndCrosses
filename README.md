@@ -46,7 +46,7 @@ Backend (API): `http://localhost:5174`
 > Если бот раньше использовался с вебхуком, `getUpdates` может не работать. Тогда отключите вебхук командой:  
 > `https://api.telegram.org/bot<TOKEN>/deleteWebhook`
 
-### Вариант B (для одного “тестового” чата): указать TELEGRAM_CHAT_ID вручную
+### Вариант B (для одного “тестового/админского” чата): указать TELEGRAM_CHAT_ID вручную
 
 4) Узнайте `chat_id`:
 
@@ -56,7 +56,7 @@ Backend (API): `http://localhost:5174`
 5) Заполните `.env`:
 
 - `TELEGRAM_BOT_TOKEN=<ваш токен>`
-- `TELEGRAM_CHAT_ID=<ваш chat_id>` (опционально)
+- `TELEGRAM_CHAT_ID=<ваш chat_id>` (если не хотите подключать игроков)
 
 ## Как получить рабочую ссылку (деплой)
 
