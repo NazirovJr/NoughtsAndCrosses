@@ -21,6 +21,8 @@ type TelegramLinkState =
 
 const TG_CODE_STORAGE_KEY = 'xo_tg_link_code'
 const TG_PROMPT_DISMISSED_KEY = 'xo_tg_prompt_dismissed'
+const FAIL_RETRIES_LEFT_STORAGE_KEY = 'xo_fail_retries_left'
+const FAIL_RETRIES_MAX = 3
 
 function App() {
   const [board, setBoard] = useState<Cell[]>(() => Array(9).fill(null))
@@ -33,10 +35,13 @@ function App() {
   const [copied, setCopied] = useState(false)
   const [tgModalOpen, setTgModalOpen] = useState(false)
   const [tgLink, setTgLink] = useState<TelegramLinkState>({ status: 'idle' })
+  const [endModalOpen, setEndModalOpen] = useState(false)
+  const [failRetriesLeft, setFailRetriesLeft] = useState<number>(FAIL_RETRIES_MAX)
 
   const telegramSentRef = useRef(false)
 
   const lockBoard = result !== 'playing' || turn !== 'human'
+  const isFailResult = result === 'loss' || result === 'draw'
 
   const statusText = useMemo(() => {
     if (result === 'win') return 'Победа!'
@@ -51,7 +56,7 @@ function App() {
     return turn === 'human' ? 'dot--pink' : 'dot--violet'
   }, [result, turn])
 
-  function reset() {
+  function resetRound() {
     setBoard(Array(9).fill(null))
     setTurn('human')
     setResult('playing')
@@ -60,6 +65,30 @@ function App() {
     setTelegramStatus('idle')
     setCopied(false)
     telegramSentRef.current = false
+    setEndModalOpen(false)
+  }
+
+  function setFailRetriesLeftPersist(next: number) {
+    const safe = Math.max(0, Math.min(FAIL_RETRIES_MAX, next))
+    setFailRetriesLeft(safe)
+    window.localStorage.setItem(FAIL_RETRIES_LEFT_STORAGE_KEY, String(safe))
+  }
+
+  function onTryAgain() {
+    if (result === 'loss' || result === 'draw') {
+      if (failRetriesLeft <= 0) return
+      setFailRetriesLeftPersist(failRetriesLeft - 1)
+    }
+    resetRound()
+  }
+
+  function onResetClick() {
+    // If the game is already ended with loss/draw, treat reset as a retry (consumes attempts).
+    if (result === 'loss' || result === 'draw') {
+      onTryAgain()
+      return
+    }
+    resetRound()
   }
 
   async function checkLinkStatus(code: string): Promise<boolean> {
@@ -82,11 +111,25 @@ function App() {
   }
 
   useEffect(() => {
+    // Open end modal whenever the game ends.
+    if (result !== 'playing') setEndModalOpen(true)
+  }, [result])
+
+  useEffect(() => {
     loadExistingLink().then(() => {
       const dismissed = window.localStorage.getItem(TG_PROMPT_DISMISSED_KEY) === '1'
       const stored = window.localStorage.getItem(TG_CODE_STORAGE_KEY)
       if (!dismissed && !stored) setTgModalOpen(true)
     })
+
+    const storedRetries = window.localStorage.getItem(FAIL_RETRIES_LEFT_STORAGE_KEY)
+    const parsed = storedRetries ? Number.parseInt(storedRetries, 10) : NaN
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= FAIL_RETRIES_MAX) {
+      setFailRetriesLeft(parsed)
+    } else {
+      window.localStorage.setItem(FAIL_RETRIES_LEFT_STORAGE_KEY, String(FAIL_RETRIES_MAX))
+      setFailRetriesLeft(FAIL_RETRIES_MAX)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -257,9 +300,9 @@ function App() {
               aria-label="Сложность компьютера"
               disabled={result !== 'playing'}
             >
-              <option value="soft">Нежно</option>
-              <option value="balanced">Уверенно</option>
-              <option value="smart">Умно</option>
+              <option value="soft">Лёгкий</option>
+              <option value="balanced">Средний</option>
+              <option value="smart">Тяжёлый</option>
             </select>
           </label>
 
@@ -303,13 +346,18 @@ function App() {
           </div>
 
           <div className="controls">
-            <button type="button" className="btn btn--ghost" onClick={reset}>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={onResetClick}
+              disabled={isFailResult && failRetriesLeft <= 0}
+            >
               Начать заново
             </button>
           </div>
 
           <p className="hint">
-            Подсказка: в режиме «Нежно» проще победить и получить промокод.
+            Подсказка: в режиме «Лёгкий» проще победить и получить промокод.
           </p>
         </section>
 
@@ -318,7 +366,7 @@ function App() {
           не уйдёт.
         </footer>
 
-        {result !== 'playing' && (
+        {result !== 'playing' && endModalOpen && (
           <div className="overlay" role="dialog" aria-modal="true">
             <div className="modal">
               <div
@@ -370,9 +418,27 @@ function App() {
               )}
 
               <div className="modalActions">
-                <button type="button" className="btn btn--primary" onClick={reset}>
-                  Сыграть ещё раз
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={onTryAgain}
+                  disabled={isFailResult && failRetriesLeft <= 0}
+                >
+                  {isFailResult
+                    ? failRetriesLeft > 0
+                      ? `Сыграть ещё раз (осталось ${failRetriesLeft})`
+                      : 'Попытки закончились'
+                    : 'Сыграть ещё раз'}
                 </button>
+                {isFailResult && (
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    onClick={() => setEndModalOpen(false)}
+                  >
+                    Закрыть
+                  </button>
+                )}
               </div>
 
               {(result === 'win' || result === 'loss') && (

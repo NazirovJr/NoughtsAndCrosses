@@ -6,11 +6,31 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
 dotenv.config()
 
 const app = express()
 app.disable('x-powered-by')
 app.use(express.json({ limit: '64kb' }))
+
+const promoLogDir = path.join(__dirname, 'data')
+const promoLogFile = path.join(promoLogDir, 'promocodes.jsonl')
+
+async function storePromoCode(promo, meta) {
+  try {
+    await fs.promises.mkdir(promoLogDir, { recursive: true })
+    const record = {
+      promo,
+      issuedAt: new Date().toISOString(),
+      ...(meta || {}),
+    }
+    await fs.promises.appendFile(promoLogFile, `${JSON.stringify(record)}\n`, 'utf8')
+  } catch (err) {
+    console.error('Failed to store promo code:', err?.message ?? err)
+  }
+}
 
 let botUsername = null
 let updatesOffset = 0
@@ -193,6 +213,11 @@ app.post('/api/telegram', async (req, res) => {
       if (typeof promo !== 'string' || !/^\d{5}$/.test(promo)) {
         return res.status(400).json({ ok: false, error: 'Invalid promo' })
       }
+
+      // Store issued promo codes for auditing/marketing.
+      void storePromoCode(promo, {
+        linkCode: typeof linkCode === 'string' ? linkCode.trim() : null,
+      })
     }
 
     const token = process.env.TELEGRAM_BOT_TOKEN
@@ -248,9 +273,6 @@ app.post('/api/telegram', async (req, res) => {
     return res.status(500).json({ ok: false, error: 'Failed to send message' })
   }
 })
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
 
 const distDir = path.join(__dirname, '..', 'dist')
 const indexHtml = path.join(distDir, 'index.html')
